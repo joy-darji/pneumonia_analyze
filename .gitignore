@@ -1,0 +1,8 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.vercel/
+.env
+*.keras
+.DS_Store

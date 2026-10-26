@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chest X-ray Classifier</title>
+  <style>
+    :root {
+      --bg: #f5f6f8; --card: #ffffff; --ink: #1a1d21; --muted: #5d6671;
+      --line: #dde1e6; --accent: #2457d6; --ok: #1a7f4b; --warn: #b4411a;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111418; --card: #1a1e24; --ink: #eceff3; --muted: #9aa4af;
+        --line: #2c333b; --accent: #6b92ff; --ok: #4cc58a; --warn: #ff8a5c;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 560px; margin: 0 auto; padding: 32px 16px 48px; }
+    h1 { font-size: 1.5rem; margin: 0 0 4px; }
+    .sub { color: var(--muted); margin: 0 0 24px; }
+    .card {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 12px; padding: 20px; margin-bottom: 16px;
+    }
+    #drop {
+      display: block; text-align: center; cursor: pointer;
+      border: 2px dashed var(--line); border-radius: 10px; padding: 28px 12px;
+      color: var(--muted); transition: border-color .15s, background .15s;
+    }
+    #drop.over, #drop:hover { border-color: var(--accent); background: rgba(36, 87, 214, .06); }
+    #drop input { display: none; }
+    #preview { display: none; max-width: 100%; max-height: 260px; margin: 16px auto 0; border-radius: 8px; }
+    button {
+      width: 100%; margin-top: 16px; padding: 12px; font: inherit; font-weight: 600;
+      color: #fff; background: var(--accent); border: 0; border-radius: 8px; cursor: pointer;
+    }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    #result { display: none; }
+    .label { font-size: 1.6rem; font-weight: 700; margin: 0; }
+    .label.ok { color: var(--ok); } .label.warn { color: var(--warn); }
+    .conf { color: var(--muted); margin: 2px 0 16px; }
+    .row { display: flex; justify-content: space-between; font-size: .9rem; margin-top: 10px; }
+    .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 4px; }
+    .bar > span { display: block; height: 100%; background: var(--accent); }
+    #error { display: none; color: var(--warn); font-weight: 600; }
+    .note { font-size: .85rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Chest X-ray Classifier</h1>
+  <p class="sub">Upload a chest X-ray image and the model predicts NORMAL or PNEUMONIA.</p>
+
+  <div class="card">
+    <label id="drop">
+      <input id="file" type="file" accept="image/png,image/jpeg">
+      <span id="drop-text">Click to choose an image, or drag one here</span>
+    </label>
+    <img id="preview" alt="Selected X-ray preview">
+    <button id="go" disabled>Analyze image</button>
+  </div>
+
+  <div class="card" id="error"></div>
+
+  <div class="card" id="result">
+    <p class="label" id="out-label"></p>
+    <p class="conf" id="out-conf"></p>
+    <div id="out-bars"></div>
+  </div>
+
+  <p class="note">
+    Educational demo only. This model is not a medical device and must not be used
+    for diagnosis. Images up to {{ max_mb }} MB (PNG or JPEG).
+  </p>
+</main>
+
+<script>
+  const MAX_BYTES = {{ max_mb }} * 1024 * 1024;
+  const $ = (id) => document.getElementById(id);
+  const drop = $('drop'), input = $('file'), preview = $('preview');
+  const go = $('go'), errorBox = $('error'), resultBox = $('result');
+  let chosen = null;
+
+  function showError(message) {
+    errorBox.textContent = message;
+    errorBox.style.display = 'block';
+    resultBox.style.display = 'none';
+  }
+
+  function choose(file) {
+    errorBox.style.display = 'none';
+    resultBox.style.display = 'none';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) return showError('Please choose an image file.');
+    if (file.size > MAX_BYTES) return showError('Image is too large (max {{ max_mb }} MB).');
+    chosen = file;
+    preview.src = URL.createObjectURL(file);
+    preview.style.display = 'block';
+    $('drop-text').textContent = file.name;
+    go.disabled = false;
+  }
+
+  input.addEventListener('change', () => choose(input.files[0]));
+  ['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => {
+    e.preventDefault(); drop.classList.add('over');
+  }));
+  ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => {
+    e.preventDefault(); drop.classList.remove('over');
+  }));
+  drop.addEventListener('drop', (e) => choose(e.dataTransfer.files[0]));
+
+  go.addEventListener('click', async () => {
+    if (!chosen) return;
+    go.disabled = true; go.textContent = 'Analyzing...';
+    errorBox.style.display = 'none';
+    try {
+      const form = new FormData();
+      form.append('file', chosen);
+      const response = await fetch('/predict', { method: 'POST', body: form });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Request failed (' + response.status + ').');
+      render(data);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      go.disabled = false; go.textContent = 'Analyze image';
+    }
+  });
+
+  function render(data) {
+    const label = $('out-label');
+    label.textContent = data.label;
+    label.className = 'label ' + (data.label === 'NORMAL' ? 'ok' : 'warn');
+    $('out-conf').textContent = 'Confidence: ' + (data.confidence * 100).toFixed(1) + '%';
+
+    const bars = $('out-bars');
+    bars.replaceChildren();
+    for (const [name, p] of Object.entries(data.probabilities)) {
+      const row = document.createElement('div');
+      const head = document.createElement('div');
+      head.className = 'row';
+      const left = document.createElement('span'); left.textContent = name;
+      const right = document.createElement('span'); right.textContent = (p * 100).toFixed(1) + '%';
+      head.append(left, right);
+      const bar = document.createElement('div'); bar.className = 'bar';
+      const fill = document.createElement('span'); fill.style.width = (p * 100) + '%';
+      bar.append(fill);
+      row.append(head, bar);
+      bars.append(row);
+    }
+    resultBox.style.display = 'block';
+  }
+</script>
+</body>
+</html>

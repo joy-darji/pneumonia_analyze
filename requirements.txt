@@ -1,0 +1,6 @@
+flask>=3.0
+numpy
+pillow>=10.0
+# Small TFLite runtime used on Vercel (Linux). On your Mac the app falls back to the
+# TFLite interpreter inside TensorFlow, which you already have from training.
+ai-edge-litert>=2.0; sys_platform == "linux"
